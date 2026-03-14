@@ -1,33 +1,76 @@
+import csv
 import pandas as pd
-import numpy as np
-from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 def load_data(csv_file):
     """Load the CSV file and parse dates and times"""
-    # Read the CSV file, skipping header rows
-    df = pd.read_csv(csv_file, skiprows=10, quotechar='"')
+    def normalize_header(value):
+        if value is None:
+            return ""
+        normalized = str(value).strip().replace('"', '').replace("'", '')
+        return " ".join(normalized.split()).lower()
 
-    # Get the first three columns (ignore empty columns)
-    df = df.iloc[:, :3].copy()
+    def find_column(columns, required_tokens):
+        for col in columns:
+            normalized = normalize_header(col)
+            if all(token in normalized for token in required_tokens):
+                return col
+        return None
 
-    # Use the header row (which is the first row after skiprows)
-    df.columns = ['Date', 'Time', 'Consumption']
+    with open(csv_file, 'r', encoding='utf-8', newline='') as fh:
+        rows = list(csv.reader(fh))
 
-    # Strip whitespace from all columns
-    df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+    if not rows:
+        return pd.DataFrame(columns=['Date', 'Time', 'Consumption', 'DateTime', 'Hour', 'TimeOfDay', 'DayOfWeek', 'Date_Only'])
 
-    # Remove any rows where Date or Time is empty or contains only spaces
+    max_cols = max(len(r) for r in rows)
+    padded_rows = [r + [''] * (max_cols - len(r)) for r in rows]
+    raw = pd.DataFrame(padded_rows)
+    raw = raw.apply(lambda col: col.str.strip() if col.dtype == "object" else col)
+
+    header_row_idx = None
+    for idx in range(len(raw)):
+        row_values = [normalize_header(v) for v in raw.iloc[idx].tolist() if pd.notna(v)]
+        if not row_values:
+            continue
+        has_date = any('date' in v or 'תאריך' in v for v in row_values)
+        has_time = any('time' in v or 'מועד תחילת הפעימה' in v for v in row_values)
+        has_consumption = any('consumption' in v or 'צריכה' in v for v in row_values)
+        if has_date and has_time and has_consumption:
+            header_row_idx = idx
+            break
+
+    if header_row_idx is not None:
+        extracted = raw.iloc[header_row_idx + 1:].copy()
+        extracted.columns = raw.iloc[header_row_idx].tolist()
+
+        date_col = find_column(extracted.columns, ['date']) or find_column(extracted.columns, ['תאריך'])
+        time_col = find_column(extracted.columns, ['time']) or find_column(extracted.columns, ['מועד', 'תחילת', 'הפעימה'])
+        consumption_col = (
+            find_column(extracted.columns, ['consumption'])
+            or find_column(extracted.columns, ['צריכה', 'ייצור'])
+            or find_column(extracted.columns, ['צריכה'])
+        )
+
+        if not date_col or not time_col or not consumption_col:
+            raise ValueError("Could not detect Date/Time/Consumption columns in meter.csv")
+
+        df = extracted[[date_col, time_col, consumption_col]].copy()
+        df.columns = ['Date', 'Time', 'Consumption']
+    else:
+        # Backward-compatible fallback for simple 3-column exports.
+        df = pd.read_csv(csv_file, skiprows=10, quotechar='"').iloc[:, :3].copy()
+        df.columns = ['Date', 'Time', 'Consumption']
+
     df = df[(df['Date'].notna()) & (df['Date'] != '') & (df['Time'].notna()) & (df['Time'] != '')]
     df = df.dropna(subset=['Consumption'])
 
-    # Convert consumption to numeric
     df['Consumption'] = pd.to_numeric(df['Consumption'], errors='coerce')
-    df = df[df['Consumption'].notna()]
+    df = df[df['Consumption'].notna()].copy()
 
-    # Convert Date and Time to datetime
-    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M')
+    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M', errors='coerce')
+    df = df[df['DateTime'].notna()].copy()
 
     # Extract time of day and day of week
     df['Hour'] = df['DateTime'].dt.hour
@@ -176,6 +219,11 @@ if __name__ == '__main__':
 
     try:
         df = load_data(csv_file)
+
+        if df.empty:
+            print("Error: No valid consumption records were parsed from meter.csv.")
+            print("Please verify the CSV format includes Date, Time, and Consumption fields.")
+            raise SystemExit(1)
 
         # Generate summary statistics
         generate_summary_statistics(df)

@@ -47,13 +47,18 @@ ICON_WARNING = "⚠"
 ICON_CAR = "🚗"
 
 # Configuration
-BASE_RATE = 0.5425  # price per kWh before discounts; change to your actual base price
+BASE_RATE = 0.6402  # price per kWh before discounts; change to your actual base price
 CURRENCY_UNIT = "NIS"  # e.g., "NIS", "USD", "EUR"
+ANALYSIS_START_DATE = "2026-01-01"  # Set to None to use all available data
 
 # Define work days and weekends (Israel: Sunday-Thursday work, Friday-Saturday weekend)
 WORK_DAYS = {'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'}
 WEEKEND_DAYS = {'Friday', 'Saturday'}
 
+# What-if: enable EV charging scenario (one nightly weekday session, 14 kWh)
+ENABLE_EV_SCENARIO = False  # True
+EV_KWH_PER_SESSION = 12.0
+EV_CHARGE_HOUR = 2  # 2:00 AM
 
 def _get_multiplier_for_hour(plan: dict, day: str, hour: int):
     """Return price multiplier (1.0 = full price, 0.2 = pay 20% of base)."""
@@ -237,10 +242,18 @@ if __name__ == '__main__':
     csv_file = 'meter.csv'
     df = load_data(csv_file)
 
-    # What-if: enable EV charging scenario (one nightly weekday session, 14 kWh)
-    ENABLE_EV_SCENARIO = True
-    EV_KWH_PER_SESSION = 12.0
-    EV_CHARGE_HOUR = 2  # 2:00 AM
+    if ANALYSIS_START_DATE:
+        start_ts = pd.to_datetime(ANALYSIS_START_DATE)
+        df = df[df['DateTime'] >= start_ts].copy()
+
+    if df.empty:
+        print(f"{Fore.RED}{Style.BRIGHT}No data found for the selected date range (from {ANALYSIS_START_DATE}).{Style.RESET_ALL}")
+        raise SystemExit(1)
+
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}Analysis date range: {df['Date_Only'].min()} to {df['Date_Only'].max()}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Records included: {len(df):,}{Style.RESET_ALL}")
+
+
 
 
     # Example supplier plans (REPLACE MULTIPLIERS WITH ACTUAL DISCOUNTS)
